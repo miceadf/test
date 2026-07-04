@@ -1,806 +1,408 @@
-# Script Code Preview
+# Script Diagrams
 
-> **역할**: 스크립트별 **역할·Public API·코드 발췌·Inspector** 정리.  
-> **다이어그램**은 [ScriptDiagrams.md](./ScriptDiagrams.md)를 본다.
+> **역할**: 씬·오브젝트 연결, 클래스 관계, 런타임 흐름 **다이어그램 전용** 문서.  
+> **코드 발췌·API 설명**은 [ScriptCodePreview.md](./ScriptCodePreview.md)를 본다.
 
 ---
 
 ## 목차
 
-| 섹션 | 스크립트 |
-|------|----------|
-| [1. Settings](#1-settings) | SettingSaveManager, SettingData, MenuSettingWindow |
-| [2. Dialogue](#2-dialogue) | DialogueManager, PathResolver, Flow Controller |
-| [3. Sound](#3-sound) | SFXManager, MusicDirector, MusicProfile, MusicNode |
-| [4. Save / Progress](#4-save--progress) | MonoSingleton, GameSaveManager, GameSaveData |
-| [5. Clue](#5-clue) | ClueInventoryManager, ClueData |
-| [6. Scene Flow / UI](#6-scene-flow--ui) | SceneFlowManager, WorldMapToggleController |
-| [7. Editor](#7-editor-참고) | 에디터 전용 도구 |
+| Part | 내용 |
+|------|------|
+| **1** | [씬 아키텍처](#part-1--씬-아키텍처) — GameObject·Inspector·흐름도 |
+| **2** | [클래스 다이어그램](#part-2--클래스-다이어그램) — 모듈별 관계·Singleton |
 
 ---
-## 1. Settings
 
-#### `SettingSaveManager` (`SettingSaveManager.cs`)
+## Part 1 — 씬 아키텍처
 
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/Settings/SettingSaveManager.cs` |
-| **역할** | `settings.json` 저장·로드 |
-| **붙는 곳** | Start_scene (또는 `EnsureExists()`로 런타임 생성) |
-| **주요 의존** | `MonoSingleton<SettingSaveManager>`, `SettingData`, `Application.persistentDataPath` |
+현재 프로젝트의 주요 스크립트 참조 관계와 씬별 필수 오브젝트 연결을 정리한다.
 
-**Public API**
+## 전체 구조
 
-| 멤버 | 설명 |
-|------|------|
-| `Instance` | `MonoSingleton<T>`가 제공하는 싱글톤 참조 |
-| `EnsureExists()` | `MonoSingleton<T>`가 제공 — 없으면 찾거나 새 GameObject 생성 |
-| `SaveSetting()` | `settingData` → JSON 파일 |
-| `LoadSetting()` | 파일 → `settingData` (없/손상 시 초기화) |
-| `settingData` | 현재 설정 인스턴스 |
+```mermaid
+flowchart TD
+    StartScene[Start_scene] --> StartUI[Start UI]
+    StartScene --> SettingsUI[Settings UI]
+    StartScene --> AudioManagers[Audio Managers]
 
-**코드 프리뷰**
+    Scene1[scene_1] --> DialogueSystem[Dialogue System]
+    Scene1 --> WorldMapSystem[World Map System]
 
-```csharp
-public class SettingSaveManager : MonoSingleton<SettingSaveManager>
-{
-    protected override void OnHostInstanceEstablished()
-    {
-        LoadSetting();
-    }
-}
+    SceneFlowManager[SceneFlowManager Singleton] --> Scene1
+    StartUI --> SceneFlowManager
+    SceneFlowManager --> GameSaveManager[GameSaveManager Singleton]
 
-// SaveFilePath = Path.Combine(Application.persistentDataPath, "settings.json")
+    SettingsUI --> MenuSettingWindow[MenuSettingWindow]
+    MenuSettingWindow --> SettingSaveManager[SettingSaveManager Singleton]
+    MenuSettingWindow --> SettingData[SettingData]
+    SettingSaveManager --> SettingData
+    SettingSaveManager --> SettingsJson[settings.json]
+
+    AudioManagers --> MusicDirector[MusicDirector]
+    AudioManagers --> SFXManager[SFXManager Singleton]
+    MusicDirector --> MusicProfile[MusicProfile ScriptableObject]
+
+    DialogueSystem --> SceneController[Scene_1_Controller]
+    SceneController --> DialogueSceneControllerBase[DialogueSceneControllerBase]
+    DialogueSceneControllerBase --> DialogueManager[DialogueManager]
+    DialogueSceneControllerBase --> GameSaveManager
+    DialogueSceneControllerBase --> SceneFlowManager
+    DialogueManager --> DialoguePathResolver[DialoguePathResolver]
+    DialogueManager --> DialogueData[DialogueData / DialogueLine]
+    DialoguePathResolver --> DialogueJson[Resources/Dialogues]
+
+    GameSaveManager --> ClueInventoryManager[ClueInventoryManager Singleton]
+    GameSaveManager --> GameSaveJson[game_save_slot_N.json]
+
+    WorldMapSystem --> WorldMapToggleController[WorldMapToggleController]
+    WorldMapToggleController --> WorldMapPanel[WorldMapPanel]
 ```
 
-**호출 흐름**: `MenuSettingWindow` → `EnsureExists()`(내부에서 `OnHostInstanceEstablished()` → `LoadSetting()`) → `settingData` 사용
+## scene_1 구성
 
-**주의**: Windows 에디터 경로 예 — `AppData/LocalLow/DefaultCompany/SSAL_FIRST/settings.json`
+```mermaid
+flowchart LR
+    subgraph Scene1[scene_1]
+        Canvas[UI_Canvas]
+        ChattingUI[Chatting_UI]
+        ChatText[Chat_Text]
+        NextArrow[NextArrow]
+        WorldMapPanel[WorldMapPanel]
+        DialogueManagerObject[DialogueManager Object]
+        Scene1ControllerObject[Scene_1_Controller Object]
+    end
 
----
+    Canvas --> ChattingUI
+    Canvas --> WorldMapPanel
+    ChattingUI --> ChatText
+    ChattingUI --> NextArrow
 
-#### `SettingData` (`SettingData.cs`)
+    Scene1ControllerObject --> Scene1Controller[Scene_1_Controller]
+    Scene1Controller --> DialogueSceneControllerBase[DialogueSceneControllerBase]
+    DialogueSceneControllerBase --> DialogueManager[DialogueManager.Instance]
+    DialogueSceneControllerBase --> GameSaveManagerX[GameSaveManager.EnsureExists]
+    DialogueSceneControllerBase --> SceneFlowManagerX[SceneFlowManager.EnsureExists]
 
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/Settings/SettingData.cs` |
-| **역할** | 설정 직렬화 DTO |
-| **붙는 곳** | 없음 (데이터 클래스) |
+    DialogueManagerObject --> DialogueManager
+    DialogueManager --> ChatText
+    DialogueManager --> ChattingUI
+    DialogueManager --> NextArrow
 
-**필드**
-
-| 필드 | 기본값 | 설명 |
-|------|--------|------|
-| `masterVolume`, `bgmVolume`, `sfxVolume` | 1f | 0~1 |
-| `masterMuted`, `bgmMuted`, `sfxMuted` | false | 뮤트 |
-| `resolutionIndex` | 0 | 해상도 드롭다운 인덱스 |
-
-**코드 프리뷰**
-
-```csharp
-[Serializable]
-public class SettingData
-{
-    public float masterVolume = 1f;
-    public float bgmVolume = 1f;
-    public float sfxVolume = 1f;
-    public bool masterMuted = false;
-    public bool bgmMuted = false;
-    public bool sfxMuted = false;
-    public int resolutionIndex = 0;
-}
+    ChattingUI --> WorldMapToggleController[WorldMapToggleController]
+    WorldMapToggleController --> WorldMapPanel
 ```
 
----
+> `SceneFlowManager`, `GameSaveManager`, `SFXManager`, `ClueInventoryManager`는 전용 GameObject가 scene_1에 없어도 된다 — 전부 `MonoSingleton<T>` 기반이라 Start_scene에서 이미 떠 있으면 `DontDestroyOnLoad`로 그대로 넘어오고, 없으면 `EnsureExists()`가 그 자리에서 새로 만든다.
 
-#### `MenuSettingWindow` (`MenuSettingScript.cs`)
+### scene_1 필수 연결
 
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/Settings/MenuSettingScript.cs` |
-| **역할** | 옵션 UI — 볼륨·뮤트·해상도, Mixer 반영, 저장 |
-| **붙는 곳** | Start_scene — Option / Settings Panel |
-| **주요 의존** | `SettingSaveManager`, `AudioMixer`, TMP, Slider |
+| 오브젝트 | 스크립트 | 필수 참조 |
+| --- | --- | --- |
+| `DialogueManager` | `DialogueManager` | `dialogueText`, `dialogueUI`, `nextArrow` |
+| `Scene_1_Controller` | `Scene_1_Controller` | 기본 Flow: `Dialogues/Flows/Scene_1_Flow`, `ChapterName`: `Chapter01` |
+| `Chatting_UI` 또는 별도 컨트롤러 오브젝트 | `WorldMapToggleController` | `worldMapPanel` |
+| `WorldMapPanel` | 없음 또는 `Image` | 지도 Sprite가 없으면 검은 패널로 표시 |
 
-**Public API**
+## 대화 진행 흐름
 
-| 멤버 | 설명 |
-|------|------|
-| `ToggleMasterMute()` / `ToggleBGMMute()` / `ToggleSFXMute()` | 뮤트 토글 + 슬라이더 UI 동기화 |
-| `SetResolution(int index)` | `Screen.SetResolution` + `resolutionIndex` 저장 |
-| `SaveSettingData()` | `SettingSaveManager.SaveSetting()` 후 패널 비활성 |
-| `CloseMenu()` | 패널만 비활성 |
+```mermaid
+sequenceDiagram
+    participant Player
+    participant Controller as Scene_1_Controller
+    participant Base as DialogueSceneControllerBase
+    participant Manager as DialogueManager
+    participant Save as GameSaveManager
+    participant Flow as SceneFlowManager
+    participant Json as Resources/Dialogues JSON
 
-**코드 프리뷰**
+    Controller->>Base: Start()
+    Base->>Json: Load flow JSON
+    Base->>Manager: GetLine(characterName, eventName, id)
+    Manager-->>Base: DialogueLine
+    Base->>Manager: ShowLine(line)
+    Base->>Save: SetDialogueProgress(flow, sequenceIndex, lineId)
 
-```csharp
-void TrySetMixerFloat(string parameterName, float dB)
-{
-    if (mixer == null || string.IsNullOrEmpty(parameterName)) return;
-    mixer.SetFloat(parameterName, dB);
-}
+    Player->>Base: Space
+    alt 타이핑 중
+        Base->>Manager: CompleteTyping()
+    else 진행 가능
+        Base->>Manager: Show next line
+        Base->>Save: SetDialogueProgress(다음 위치)
+    end
 
-void ResolveMixerReference()
-{
-    if (mixer != null) return;
-    mixer = Resources.Load<AudioMixer>("GameSettingsMixer");
-    // 실제 프로젝트: Assets/Features/GameSettingsMixer.mixer → Inspector 할당 권장
-}
+    Note over Base: 마지막 시퀀스까지 다 보여준 뒤 Space
+    Base->>Base: EndScene()
+    Base->>Save: SetChapter(ChapterName)
+    Base->>Save: AutoSave()
+    opt NextSceneName 설정됨
+        Base->>Flow: GoToScene(NextSceneName)
+    end
 ```
 
-**Inspector / 연결**
+`SetDialogueProgress()`는 매 줄마다 메모리상의 `GameSaveData`만 갱신한다(디스크 쓰기 없음). 실제 파일 저장은 `AutoSave()`가 불릴 때만 일어난다 — 즉 한 씬(챕터)의 대화가 끝나는 시점에만 디스크에 기록된다.
 
-| 필드 | 타입 | 필수 |
-|------|------|------|
-| `mixer` | AudioMixer | Y (또는 Resources fallback) |
-| `masterVolumeSlider` 등 | Slider ×3 | Y |
-| `masterText` 등 | TMP_Text ×3 | Y |
-| `masterImage` 등 + `soundWaves` | Image + Sprite List | Y |
-| `resolutionDropdown` | TMP_Dropdown | Y |
+## 세이브 흐름
 
-**호출 흐름**: 슬라이더 드래그 → `PreviewVolume` → Mixer dB / 드래그 종료 → `SetVolume` → `SettingData` + `ApplyAllVolumes`
+```mermaid
+flowchart TD
+    NewGameBtn[Start 버튼] --> StartNewGame[SceneFlowManager.StartNewGame]
+    StartNewGame --> ResetForNewGame[GameSaveManager.ResetForNewGame]
+    ResetForNewGame --> FreshData[새 GameSaveData 생성]
+    FreshData --> AutoSlot1[AutoSaveSlot 1번에 저장]
 
----
+    DialogueEnd[대사 Flow 종료] --> SetChapter[GameSaveManager.SetChapter]
+    SetChapter --> AutoSave[GameSaveManager.AutoSave]
+    AutoSave --> AutoSlot1
 
-## 2. Dialogue
+    EveryLine[대사 한 줄 표시] --> SetProgress[GameSaveManager.SetDialogueProgress]
+    SetProgress --> MemoryOnly[메모리만 갱신, 디스크 저장 아님]
 
-#### `DialogueManager` (`DialogueManager.cs`)
-
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/Json/DialogueManager.cs` |
-| **역할** | 대화 JSON 로드·캐싱, 타이핑 출력, NextArrow, UI 토글 |
-| **붙는 곳** | scene_1 — DialogueManager Object |
-| **주요 의존** | Newtonsoft.Json, `DialoguePathResolver`, TMP, Input System |
-
-**Public API**
-
-| 멤버 | 설명 |
-|------|------|
-| `Instance` | 씬 내 싱글톤(독자 구현, `DontDestroyOnLoad` 아님) |
-| `GetLine(character, event, id)` | `DialogueLine` 반환 |
-| `GetLines(character, event)` | 전체 lines |
-| `ShowLine(line)` | 타이핑 시작 |
-| `CompleteTyping()` | 타이핑 즉시 완료 |
-| `IsTyping()` / `CanProceed()` | Space 진행 조건 |
-| `ToggleUI(bool)` | 대화 UI on/off (우클릭도 동일) |
-
-> 예전에 있던 `LoadDialogue(...)` 레거시 호환 메소드는 아무 데서도 참조되지 않아 삭제됨(`GetLine` + `ShowLine`으로 대체).
-
-**코드 프리뷰**
-
-```csharp
-public DialogueLine GetLine(string characterName, string eventName, int id)
-{
-    DialogueData data = GetDialogueData(characterName, eventName);
-    if (data == null) return null;
-    return data.lines.Find(item => item.id == id);
-}
-
-private TextAsset LoadDialogueTextAsset(string characterName, string eventName, out string resourcePath)
-{
-    foreach (string candidateEventName in DialoguePathResolver.GetEventNameCandidates(eventName))
-        foreach (string folderName in DialoguePathResolver.GetFolderCandidates(characterName, candidateEventName))
-        {
-            string candidatePath = $"Dialogues/{folderName}/{candidateEventName}";
-            TextAsset jsonText = Resources.Load<TextAsset>(candidatePath);
-            if (jsonText != null) { resourcePath = candidatePath; return jsonText; }
-        }
-    return null;
-}
+    ManualSaveFuture[예정: 일시정지 메뉴 수동 저장] -.-> SaveGameToSlot[GameSaveManager.SaveGameToSlot]
+    SaveGameToSlot -.-> SlotFile[game_save_slot_N.json]
 ```
 
-**Inspector**
+**슬롯 정책(합의됨, A안)**: 슬롯 1번(`GameSaveManager.AutoSaveSlot`)은 오토세이브 전용으로 예약. 수동 저장 UI가 생기면 슬롯 1번을 선택 못 하게 막아야 하는데, **이 보호 로직은 아직 코드에 없음**(의도적으로 미룸 — Part 1 하단 주의사항 참고).
 
-| 필드 | 필수 |
-|------|------|
-| `dialogueText` | Y |
-| `dialogueUI` | Y |
-| `nextArrow` | N (자식 `NextArrow` 자동 탐색) |
+## 씬 전환 흐름
 
-**호출 흐름**: `Scene Controller` → `GetLine` → `ShowLine` → `TypeLine` → Space → `CompleteTyping` 또는 다음 line
+```mermaid
+flowchart TD
+    subgraph StartSceneButtons[Start_scene 버튼]
+        StartBtn[Start] 
+        QuitBtn[Quit]
+    end
 
----
+    StartBtn --> StartNewGame[SceneFlowManager.StartNewGame]
+    QuitBtn --> QuitGame[SceneFlowManager.QuitGame]
 
-#### `DialoguePathResolver` (`DialoguePathResolver.cs`)
+    StartNewGame --> ResetSave[GameSaveManager.ResetForNewGame Chapter01]
+    ResetSave --> GoToScene1[SceneFlowManager.GoToScene scene_1]
 
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/Json/DialoguePathResolver.cs` |
-| **역할** | 한글 캐릭터명·이벤트명 → Resources 경로 후보 생성 |
-| **붙는 곳** | 없음 (static) |
+    ContinueFuture[예정: Continue 버튼] -.-> ContinueGame[SceneFlowManager.ContinueGame]
+    ContinueGame -.-> GoToScene1Fixed[GoToScene scene_1 고정]
 
-**Public API**
-
-| 멤버 | 설명 |
-|------|------|
-| `GetFolderCandidates(characterName, eventName)` | 폴더 후보 리스트 (순서대로 시도) |
-| `GetEventNameCandidates(eventName)` | 이벤트명 + `Patridge_` 보정 |
-
-**코드 프리뷰**
-
-```csharp
-private static readonly Dictionary<string, string> characterFolderMap = new()
-{
-    { "모피어스", "Morpheus" },
-    { "프레시아", "Presia" },
-    { "상인A", "etc" },
-    // ...
-};
-
-public static List<string> GetFolderCandidates(string characterName, string eventName)
-{
-    var folders = new List<string>();
-    if (characterFolderMap.TryGetValue(characterName, out string mappedFolder))
-        AddCandidate(folders, mappedFolder);
-    AddCandidate(folders, characterName);
-    AddCandidate(folders, GetEventPrefix(eventName));
-    AddCandidate(folders, "etc");
-    return folders;
-}
+    DialogueFlowEnd[대사 Flow 종료 NextSceneName 있음] --> GoToSceneN[SceneFlowManager.GoToScene NextSceneName]
 ```
 
----
+**알려진 제약**: `ContinueGame()`은 저장된 `currentChapter` 값과 상관없이 항상 `scene_1`로만 이동한다. 씬이 여러 개(scene_2 이상) 생기면 챕터 → 씬 이름 매핑 로직을 추가해야 한다. Continue 버튼 자체도 UI에 아직 없다 — 둘 다 의도적으로 미뤄둔 상태.
 
-#### 대화 데이터 타입 (`DialogueLine.cs`)
+## 월드맵 흐름
 
-| 클래스 | 용도 | 주요 필드 |
-|--------|------|-----------|
-| `DialogueLine` | 한 줄 대사 | `id`, `characterName`, `dialogue_KR` |
-| `DialogueData` | 캐릭터/이벤트 JSON | `chapterName`, `lines` |
-| `DialogueSequence` | Flow 한 구간 | `characterName`, `eventName`, `startId`, `endId` |
-| `DialogueFlowData` | 씬 Flow JSON | `flowName`, `sequences` |
+```mermaid
+flowchart TD
+    Player[M 키 입력] --> WorldMapToggleController
+    WorldMapToggleController --> ToggleWorldMap[ToggleWorldMap]
+    ToggleWorldMap --> SetWorldMapVisible[SetWorldMapVisible]
+    SetWorldMapVisible --> BringToFront[worldMapPanel.transform.SetAsLastSibling]
+    BringToFront --> PanelActive[WorldMapPanel.SetActive]
 
-> 선택지(분기) 관련 필드는 없음 — 진행은 항상 `sequences` 배열 순서대로만 이루어진다.
-
-**코드 프리뷰**
-
-```csharp
-public class DialogueSequence
-{
-    public string characterName;
-    public string eventName;
-    public int startId = 1;
-    public int endId = 1;
-}
-
-public class DialogueFlowData
-{
-    public string flowName;
-    public List<DialogueSequence> sequences;
-}
+    WorldMapSprite{World Map Sprite 있음?}
+    WorldMapToggleController --> WorldMapSprite
+    WorldMapSprite -- Yes --> ShowSprite[지도 Sprite 표시]
+    WorldMapSprite -- No --> Fallback[검은 배경 표시]
 ```
 
-**리소스 예**: `Resources/Dialogues/Flows/Scene_1_Flow.json`, `Resources/Dialogues/Presia/Presia_C1Main.json`
+## Start_scene 구성
 
----
+```mermaid
+flowchart LR
+    subgraph StartScene[Start_scene]
+        StartInterface[Start_interface]
+        OptionPanel[Option / Settings Panel]
+        SceneFlowObject[SceneFlowManager Object]
+        MusicDirectorObject[MusicDirector Object]
+        SFXObject[SFXManager Object]
+    end
 
-#### `DialogueSceneControllerBase` (`DialogueSceneControllerBase.cs`)
+    StartInterface --> SceneFlowManager[SceneFlowManager]
+    SceneFlowManager -->|OnClick StartNewGame| StartBtn2[Start 버튼]
+    SceneFlowManager -->|OnClick QuitGame| QuitBtn2[Quit 버튼]
 
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/SceneController/DialogueSceneControllerBase.cs` |
-| **역할** | Flow JSON 로드 후 sequence별 대화 자동 진행 + 진행상황 저장 + 종료 시 씬 전환 |
-| **붙는 곳** | scene_1 등 — 씬별 Controller |
+    OptionPanel --> MenuSettingWindow[MenuSettingWindow]
+    MenuSettingWindow --> SettingSaveManager[SettingSaveManager.EnsureExists]
+    MenuSettingWindow --> AudioMixer[GameSettingsMixer]
+    MenuSettingWindow --> SettingData[SettingData]
 
-**확장 포인트**
-
-| 멤버 | 설명 |
-|------|------|
-| `DefaultFlowResourcePath` | abstract — Resources 경로 |
-| `ChapterName` | abstract — 이 씬이 속한 챕터 이름. `OnDialogueFlowFinished()`에서 `GameSaveManager.SetChapter()`에 씀 |
-| `NextSceneName` | virtual, 기본 `null` — 값이 있으면 Flow 종료 시 그 씬으로 자동 전환 |
-| `flowResourcePath` | Inspector override (비어 있으면 Default 사용) |
-
-**코드 프리뷰**
-
-```csharp
-protected virtual void OnDialogueFlowFinished()
-{
-    DialogueManager.Instance.ToggleUI(false);
-
-    GameSaveManager saveManager = GameSaveManager.EnsureExists();
-    saveManager.SetChapter(ChapterName);
-    saveManager.AutoSave();
-
-    if (!string.IsNullOrWhiteSpace(NextSceneName))
-        SceneFlowManager.EnsureExists().GoToScene(NextSceneName);
-}
-
-private void ShowNext()
-{
-    DialogueSequence sequence = flowData.sequences[sequenceIndex];
-    DialogueLine line = DialogueManager.Instance.GetLine(sequence.characterName, sequence.eventName, currentLineId);
-    if (line == null) return;
-
-    DialogueManager.Instance.ShowLine(line);
-    GameSaveManager.EnsureExists().SetDialogueProgress(FlowResourcePath, sequenceIndex, currentLineId);
-    Advance();
-}
+    MusicDirectorObject --> MusicDirector[MusicDirector]
+    MusicDirector --> MusicProfile[MusicProfile]
+    SFXObject --> SFXManager[SFXManager]
 ```
 
-**입력**: Space — 타이핑 스킵 / 다음 line
+> `MusicDirector`는 싱글톤이 아니고 `DontDestroyOnLoad`도 없다 — Start_scene 전용 오브젝트라서 scene_1로 넘어가면 같이 파괴된다(재생 중이던 배경음도 끊김). `SFXManager`는 `MonoSingleton`이라 scene_1까지 그대로 유지된다. 이 둘의 동작 차이는 아직 실제로 다 확인된 건 아님(별도 브랜치 작업 예정).
 
-**진행상황 저장 방식**: `sequenceIndex`/`currentLineId`는 1부터 증가하는 전역 카운터가 아니라 "현재 활성 Flow(`flowResourcePath`) 안에서 몇 번째 시퀀스·몇 번 id인지"를 가리키는 좌표다. 매 줄 보여줄 때마다 메모리상의 `GameSaveData`만 갱신되고, 디스크 저장은 Flow가 끝날 때(`AutoSave()`)만 일어난다.
+### Start_scene 필수 연결
 
----
+| 오브젝트 | 스크립트 | 필수 참조 |
+| --- | --- | --- |
+| `Option` 또는 설정 패널 | `MenuSettingWindow` | 볼륨 Slider, Text, Image, Resolution Dropdown, AudioMixer |
+| `SceneFlowManager` | `SceneFlowManager` | 없음(순수 로직) — Start/Quit 버튼 OnClick에서 호출 |
+| `SFXManager` | `SFXManager` | AudioSource, Button Click Clip |
+| `MusicDirector` | `MusicDirector` | `playOnStart`(MusicProfile), `outputMixerGroup` |
 
-#### `Scene_1_Controller` (`Scene_1_Controller.cs`)
+## 데이터와 리소스 경로
 
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/SceneController/Scene_1_Controller.cs` |
-| **역할** | 1장 Flow 전용 Controller |
-| **붙는 곳** | scene_1 — Scene_1_Controller Object |
+```mermaid
+flowchart TD
+    DialogueManager --> ResourcesLoad[Resources.Load]
+    ResourcesLoad --> FlowJson[Assets/Resources/Dialogues/Flows]
+    ResourcesLoad --> CharacterJson[Assets/Resources/Dialogues/CharacterFolders]
 
-**코드 프리뷰**
+    DialoguePathResolver --> Morpheus[Morpheus]
+    DialoguePathResolver --> Presia[Presia]
+    DialoguePathResolver --> Narration[Narration]
+    DialoguePathResolver --> Partridge[Partridge]
+    DialoguePathResolver --> Revolution[Revolution]
+    DialoguePathResolver --> Etc[etc]
 
-```csharp
-public class Scene_1_Controller : DialogueSceneControllerBase
-{
-    protected override string DefaultFlowResourcePath => "Dialogues/Flows/Scene_1_Flow";
-    protected override string ChapterName => "Chapter01";
-    protected override string LogPrefix => "[Scene_1]";
-}
+    SettingSaveManager --> PersistentDataPath[Application.persistentDataPath/settings.json]
+    GameSaveManager --> SaveDataPath[Application.persistentDataPath/game_save_slot_N.json]
+    WorldMapToggleController --> MapResource[Assets/Resources/Map 예정]
 ```
 
-**새 씬 컨트롤러 추가 패턴**: `DialogueSceneControllerBase`를 상속해서 `DefaultFlowResourcePath`, `ChapterName`, `LogPrefix` 세 개를 채우고, 이 씬 끝나고 바로 다음 씬으로 넘어가야 하면 `NextSceneName`도 override한다. 그 외 로직은 부모 클래스가 전부 처리하므로 건드릴 필요 없음.
+## 주의할 점
+
+- `WorldMapPanel`은 `UI_Canvas` 아래에서 `Chatting_UI`보다 뒤쪽 sibling이어야 위에 보인다.
+- `WorldMapToggleController`는 `WorldMapPanel` 자체가 아니라 항상 켜져 있는 오브젝트에 붙이는 것이 안전하다.
+- `Resources.Load()` 경로에는 확장자를 쓰지 않는다.
+- Unity에서 파일 또는 폴더를 이동할 때는 `.meta` 파일도 함께 이동한다.
+- `scene_1`은 이제 `ProjectSettings/EditorBuildSettings.asset`에 등록되어 있다(과거엔 `Start_scene`만 등록돼서 `LoadScene`이 실패했음).
+- 씬 전환은 전부 `SceneFlowManager.GoToScene(string)`을 거친다 — 다른 곳에서 직접 `SceneManager.LoadScene`을 부르지 않는다.
+- 저장은 전부 `GameSaveManager`를 거친다 — 대사 진행상황(`SetDialogueProgress`)은 매 줄마다 메모리만 갱신하고, 실제 파일 쓰기(`AutoSave` / `SaveGameToSlot`)는 챕터 종료 시점 또는 향후 수동 저장 시점에만 일어난다.
+- 대사 도중 씬 전환 없이 다른 이벤트 콘텐츠를 끼워 넣는 기능(예: 서브 대화)은 아직 데이터 구조·컨트롤러 로직에 반영 안 됨 — 지금은 컨트롤러 하나가 flow 하나만 순차 진행하는 것을 전제로 함.
+- 대사 선택지(분기) 기능도 아직 없음 — `DialogueLine`/`DialogueSequence`에 분기 필드 자체가 없어서, `Advance()`는 항상 배열 순서대로만 진행한다.
 
 ---
 
-## 3. Sound
+## Part 2 — 클래스 다이어그램
 
-#### `SFXManager` (`SFXManager.cs`)
+### 2.0 범례
 
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/Sound/SFXManager.cs` |
-| **역할** | 버튼 클릭 SFX, 씬 전환 후에도 유지 |
-| **붙는 곳** | Start_scene — SFXManager Object |
-| **주요 의존** | `MonoSingleton<SFXManager>` |
+- `──▶` : 사용/호출 (런타임)
+- `- - ▶` : SerializeField / Inspector 연결
+- `◆` : Singleton 또는 static Instance (다이어그램 범례용 — Mermaid 본문에는 ASCII만 사용)
+- `(abstract)` : 추상 클래스 → Mermaid에서는 `<<abstract>>`
+- `(data)` : 직렬화 데이터, MonoBehaviour 아님
+- `(editor)` : `#if UNITY_EDITOR` 전용
 
-**Public API**
+> **GitHub Mermaid 주의**: `◆`, `(data)`, 파일명의 `.`(점), `→` 같은 기호는 렌더 오류를 일으킬 수 있어 다이어그램 본문에서는 피한다.
 
-| 멤버 | 설명 |
-|------|------|
-| `Instance` / `EnsureExists()` | `MonoSingleton<T>` 제공 |
-| `PlayButtonClick()` | `PlayOneShot(buttonClickClip)` |
-| `BindButtonsInScene()` | 씬 내 모든 Button에 리스너 등록 |
+---
 
-**코드 프리뷰**
+### 2.1. 전체 클래스 관계 (한 장 요약)
 
-```csharp
-public sealed class SFXManager : MonoSingleton<SFXManager>
-{
-    protected override void OnHostInstanceEstablished()
-    {
-        if (audioSource == null)
-            audioSource = GetComponent<AudioSource>();
-        audioSource.playOnAwake = false;
-        audioSource.loop = false;
-        audioSource.spatialBlend = 0f;
-        if (outputMixerGroup != null)
-            audioSource.outputAudioMixerGroup = outputMixerGroup;
+```mermaid
+classDiagram
+    direction TB
+
+    class MonoSingleton~T~ {
+        <<abstract>>
+        +Instance
+        +EnsureExists()
+        #OnHostInstanceEstablished()
     }
 
-    public void BindButtonsInScene()
-    {
-        if (!bindButtonsAutomatically) return;
-        foreach (Button button in FindObjectsByType<Button>(FindObjectsInactive.Include, FindObjectsSortMode.None))
-        {
-            if (button == null || boundButtons.Contains(button)) continue;
-            button.onClick.AddListener(PlayButtonClick);
-            boundButtons.Add(button);
-        }
+    class SettingSaveManager {
+        +SaveSetting()
+        +LoadSetting()
+        +settingData
     }
-}
-```
-
-**Inspector**: `audioSource`, `buttonClickClip` (`Resources/Sound/Sfx/button_click.mp3`)
-
----
-
-#### `MusicDirector` / `MusicProfile` / `MusicNode` (`MusicDirector.cs`, `MusicProfile.cs`, `MusicNode.cs`)
-
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/Sound/` |
-| **네임스페이스** | `SSAL.Sound` |
-| **역할** | 배경음 재생 — `MusicProfile`(ScriptableObject)에 저장된 `MusicNode` 트리를 재귀 실행 |
-| **붙는 곳** | Start_scene — MusicDirector Object (씬 로컬, 싱글톤 아님) |
-
-**`MusicNode` 종류**
-
-| 클래스 | 동작 |
-|--------|------|
-| `MusicClipNode` | AudioClip 하나 재생 (volume, pitch) |
-| `MusicSequenceNode` | 자식들을 순서대로 재생 |
-| `MusicLoopNode` | 자식을 지정 횟수(0=무한) 반복 |
-| `MusicRandomNode` | 자식 중 무작위 선택 (`avoidImmediateRepeat` 옵션) |
-| `MusicOverlayNode` | 여러 자식을 동시에 재생 |
-| `MusicDelayNode` | 다음 노드 전 랜덤 범위만큼 대기 |
-
-**코드 프리뷰**
-
-```csharp
-[CreateAssetMenu(fileName = "MusicProfile", menuName = "SSAL/Sound/Music Profile")]
-public sealed class MusicProfile : ScriptableObject
-{
-    [SerializeReference] private MusicNode root;
-    public MusicNode Root => root;
-}
-
-public void Play(MusicProfile profile)
-{
-    Stop();
-    if (profile == null || profile.Root == null) return;
-
-    double startTime = AudioSettings.dspTime + schedulingLeadTime;
-    StartCoroutine(Execute(profile.Root, new PlaybackCursor(startTime), playbackVersion));
-}
-```
-
-**Inspector**: `playOnStart`(MusicProfile), `outputMixerGroup`, `schedulingLeadTime`, `logPlayback`
-
-**주의**: `MusicDirector`는 `DontDestroyOnLoad`가 없다. Start_scene에서 재생 중이던 배경음은 scene_1로 넘어가면 오브젝트째로 파괴되어 끊긴다 — 씬 간 배경음 연속 재생은 별도 작업 필요(현재 Script 브랜치 범위 밖, 다른 브랜치에서 진행 중).
-
----
-
-## 4. Save / Progress
-
-#### `MonoSingleton<T>` (`Core/MonoSingleton.cs`)
-
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/Core/MonoSingleton.cs` |
-| **역할** | 씬에 하나만 있어야 하는 매니저들의 공통 싱글톤 베이스 — 중복 오브젝트 파괴, `DontDestroyOnLoad`, `EnsureExists()` 로직을 한 곳에 모음 |
-| **붙는 곳** | 없음 (제네릭 추상 클래스, 상속 전용) |
-
-**Public API**
-
-| 멤버 | 설명 |
-|------|------|
-| `Instance` | 정적 싱글톤 참조 |
-| `EnsureExists()` | 없으면 씬에서 찾거나 새 GameObject 생성 후 반환 |
-| `OnHostInstanceEstablished()` | protected virtual — 이 인스턴스가 싱글톤 자리를 차지했을 때 한 번 호출. 하위 클래스는 초기 로드 로직을 여기 둠 |
-
-**코드 프리뷰**
-
-```csharp
-public abstract class MonoSingleton<T> : MonoBehaviour where T : MonoSingleton<T>
-{
-    public static T Instance { get; private set; }
-
-    public static T EnsureExists()
-    {
-        if (Instance != null) return Instance;
-        var existing = FindFirstObjectByType<T>(FindObjectsInactive.Include);
-        if (existing != null) { existing.TryBecomeHostInstance(); return Instance; }
-        var go = new GameObject(typeof(T).Name);
-        go.AddComponent<T>();
-        return Instance;
+    class SettingData {
+        +masterVolume
+        +bgmVolume
+        +sfxVolume
+    }
+    class MenuSettingWindow {
+        +SaveSettingData()
+        +ToggleMasterMute()
+        +SetResolution()
+    }
+    class SFXManager {
+        +PlayButtonClick()
+        +BindButtonsInScene()
+    }
+    class MusicDirector {
+        +Play()
+        +Stop()
+    }
+    class MusicProfile {
+        <<data>>
+        +Root
     }
 
-    protected virtual void Awake() => TryBecomeHostInstance();
+    class DialogueSceneControllerBase {
+        <<abstract>>
+        +ShowNext()
+        #ChapterName
+        #NextSceneName
+    }
+    class Scene_1_Controller
+    class DialogueManager {
+        +GetLine()
+        +ShowLine()
+        +CompleteTyping()
+        +CanProceed()
+    }
+    class DialoguePathResolver {
+        <<utility>>
+        +GetFolderCandidates()
+        +GetEventNameCandidates()
+    }
+    class DialogueFlowData
+    class DialogueData
+    class DialogueLine
 
-    private void TryBecomeHostInstance()
-    {
-        if (Instance == this) return;
-        if (Instance != null && Instance != this) { Destroy(gameObject); return; }
-        Instance = (T)this;
-        DontDestroyOnLoad(gameObject);
-        OnHostInstanceEstablished();
+    class GameSaveManager {
+        +AutoSave()
+        +ResetForNewGame()
+        +SetChapter()
+        +SetDialogueProgress()
+        +PeekSlotData()
+    }
+    class GameSaveData
+    class ClueInventoryManager {
+        +AddClue()
+        +HasClue()
+    }
+    class ClueData
+
+    class SceneFlowManager {
+        +StartNewGame()
+        +ContinueGame()
+        +QuitGame()
+        +GoToScene()
     }
 
-    protected virtual void OnHostInstanceEstablished() { }
-}
-```
-
-**상속 클래스**: `GameSaveManager`, `ClueInventoryManager`, `SettingSaveManager`, `SFXManager`, `SceneFlowManager`
-
----
-
-#### `GameSaveManager` (`GameSaveManager.cs`)
-
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/Save/GameSaveManager.cs` |
-| **역할** | 챕터·대사 진행상황·단서 목록을 슬롯별 JSON 파일로 저장/로드 |
-| **붙는 곳** | 없음(`EnsureExists()`로 런타임 생성) |
-| **주요 의존** | `MonoSingleton<GameSaveManager>`, `GameSaveData` |
-
-**Public API**
-
-| 멤버 | 설명 |
-|------|------|
-| `MinSaveSlot` / `MaxSaveSlot` | 1 ~ 3 |
-| `AutoSaveSlot` | 오토세이브 전용 슬롯 번호(=`MinSaveSlot`=1) |
-| `Data` | 현재 활성 슬롯의 `GameSaveData` |
-| `SetChapter(name)` | `currentChapter` 갱신(메모리만) |
-| `SetDialogueProgress(flow, seq, lineId)` | 대사 진행 좌표 갱신(메모리만) |
-| `AutoSave()` | `AutoSaveSlot`에 저장 — 수동 저장과 진입점 분리 |
-| `ResetForNewGame(chapterName)` | `GameSaveData`를 완전히 새로 만들고 지정 챕터로 `AutoSave()` — "새 게임" 전용 |
-| `SaveGameToSlot(slot)` / `LoadGameFromSlot(slot)` | 수동 슬롯 저장/로드 (아직 UI 미연결) |
-| `HasSaveSlot(slot)` | 슬롯 파일 존재 여부 |
-| `PeekSlotData(slot)` | 활성 슬롯 안 바꾸고 다른 슬롯 내용만 읽기 (저장 메뉴 미리보기용, 아직 UI 미연결) |
-| `HasClue(id)` / `AddClue(id)` | 단서 목록 조회/추가 |
-
-**코드 프리뷰**
-
-```csharp
-public const int AutoSaveSlot = MinSaveSlot;
-
-public void AutoSave()
-{
-    SaveGameToSlot(AutoSaveSlot);
-}
-
-public void ResetForNewGame(string chapterName)
-{
-    gameSaveData = new GameSaveData();
-    EnsureGameSaveData();
-    gameSaveData.currentChapter = chapterName;
-    AutoSave();
-}
-
-public GameSaveData PeekSlotData(int slot)
-{
-    string path = GetSaveFilePath(slot);
-    if (!File.Exists(path)) return null;
-    string json = File.ReadAllText(path);
-    return string.IsNullOrEmpty(json) ? null : JsonUtility.FromJson<GameSaveData>(json);
-}
-```
-
-**저장 파일 경로**: `Application.persistentDataPath/game_save_slot_{slot}.json`
-
-**실제 확인된 저장 내용 예** (scene_1 대사 22턴 끝까지 진행 후):
-
-```json
-{
-    "currentChapter": "Chapter01",
-    "dialogueProgress": {
-        "flowResourcePath": "Dialogues/Flows/Scene_1_Flow",
-        "sequenceIndex": 21,
-        "currentLineId": 11
-    },
-    "clueInventory": { "obtainedClueIds": [] }
-}
-```
-
-**미구현**: 오토세이브 슬롯(1번)을 수동 저장으로부터 코드 레벨에서 막는 로직 — 저장 메뉴 UI 만들 때 같이 추가 예정.
-
----
-
-#### `GameSaveData` (`GameSaveData.cs`)
-
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/Save/GameSaveData.cs` |
-| **역할** | 세이브 파일 직렬화 DTO |
-
-**코드 프리뷰**
-
-```csharp
-[Serializable]
-public class GameSaveData
-{
-    public string currentChapter = "Chapter01";
-    public DialogueProgressSaveData dialogueProgress = new DialogueProgressSaveData();
-    public ClueInventorySaveData clueInventory = new ClueInventorySaveData();
-}
-
-[Serializable]
-public class DialogueProgressSaveData
-{
-    public string flowResourcePath = "Dialogues/Flows/Scene_1_Flow";
-    public int sequenceIndex = 0;
-    public int currentLineId = 1;
-}
-
-[Serializable]
-public class ClueInventorySaveData
-{
-    public List<string> obtainedClueIds = new List<string>();
-}
-```
-
----
-
-## 5. Clue
-
-#### `ClueInventoryManager` (`ClueInventoryManager.cs`)
-
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/Clue/ClueInventoryManager.cs` |
-| **역할** | 단서 획득/조회 — 실제 저장은 `GameSaveManager`에 위임 |
-| **붙는 곳** | 없음(`EnsureExists()`로 런타임 생성) |
-| **주요 의존** | `MonoSingleton<ClueInventoryManager>`, `GameSaveManager` |
-
-**Public API**
-
-| 멤버 | 설명 |
-|------|------|
-| `AddClue(clueId)` | 새 단서면 `GameSaveManager.AddClue()` + `SaveGame()` |
-| `HasClue(clueId)` | 보유 여부 |
-| `GetObtainedClueIds()` | 보유 목록 |
-
-**코드 프리뷰**
-
-```csharp
-public class ClueInventoryManager : MonoSingleton<ClueInventoryManager>
-{
-    private GameSaveManager gameSaveManager;
-
-    protected override void OnHostInstanceEstablished()
-    {
-        gameSaveManager = GameSaveManager.EnsureExists();
+    class WorldMapToggleController {
+        +ToggleWorldMap()
+        +SetWorldMapVisible()
     }
 
-    public bool AddClue(string clueId)
-    {
-        bool isAdded = gameSaveManager.AddClue(clueId);
-        if (!isAdded) return false;
-        gameSaveManager.SaveGame();
-        return true;
-    }
-}
+    MonoSingleton~T~ <|-- SettingSaveManager
+    MonoSingleton~T~ <|-- SFXManager
+    MonoSingleton~T~ <|-- GameSaveManager
+    MonoSingleton~T~ <|-- ClueInventoryManager
+    MonoSingleton~T~ <|-- SceneFlowManager
+
+    SettingSaveManager --> SettingData
+    MenuSettingWindow --> SettingSaveManager
+    MenuSettingWindow --> SettingData
+
+    MusicDirector --> MusicProfile
+
+    DialogueSceneControllerBase <|-- Scene_1_Controller
+    DialogueSceneControllerBase --> DialogueManager
+    DialogueSceneControllerBase --> DialogueFlowData
+    DialogueSceneControllerBase --> GameSaveManager : SetChapter, SetDialogueProgress, AutoSave
+    DialogueSceneControllerBase --> SceneFlowManager : GoToScene
+    DialogueManager --> DialoguePathResolver
+    DialogueManager --> DialogueData
+    DialogueManager --> DialogueLine
+
+    GameSaveManager --> GameSaveData
+    ClueInventoryManager --> GameSaveManager
+    ClueInventoryManager --> ClueData
 ```
-
-**⚠ 미연결 상태**: 게임플레이/UI 어디서도 `AddClue`/`HasClue`를 호출하는 곳이 없다. 데이터 구조와 매니저만 준비되어 있고, 실제 "단서를 얻는 이벤트" 자체가 아직 없음.
-
----
-
-#### `ClueData` (`ClueData.cs`)
-
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/Clue/ClueData.cs` |
-| **역할** | 단서 표시용 데이터(POCO) — `clueId`로 저장 목록과 매칭해서 UI에 표시할 때 사용 예정 |
-
-**코드 프리뷰**
-
-```csharp
-[Serializable]
-public class ClueData
-{
-    public string clueId;
-    public string displayName;
-    [TextArea] public string description;
-    public Sprite icon;
-}
-```
-
----
-
-## 6. Scene Flow / UI
-
-#### `SceneFlowManager` (`SceneFlowManager.cs`)
-
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/SceneController/SceneFlowManager.cs` |
-| **역할** | 씬 전환(새 게임 시작, 이어하기, 종료)의 단일 진입점 |
-| **붙는 곳** | Start_scene — SceneFlowManager Object (버튼 OnClick에서 호출) |
-| **주요 의존** | `MonoSingleton<SceneFlowManager>`, `GameSaveManager` |
-
-**Public API**
-
-| 멤버 | 설명 |
-|------|------|
-| `StartNewGame()` | `GameSaveManager.ResetForNewGame("Chapter01")` 후 `GoToScene("scene_1")` |
-| `ContinueGame()` | 세이브 리셋 없이 `GoToScene("scene_1")` — **UI 버튼 아직 없음, 챕터별 씬 매핑도 아직 없어서 항상 scene_1로 감** |
-| `QuitGame()` | 에디터 Play 중지 / 빌드 `Application.Quit()` |
-| `GoToScene(sceneName)` | `SceneManager.LoadScene(sceneName)` — 모든 씬 전환이 이 메소드를 거침 |
-
-**코드 프리뷰**
-
-```csharp
-public class SceneFlowManager : MonoSingleton<SceneFlowManager>
-{
-    private const string GameSceneName = "scene_1";
-    private const string NewGameChapter = "Chapter01";
-
-    public void StartNewGame()
-    {
-        GameSaveManager.EnsureExists().ResetForNewGame(NewGameChapter);
-        GoToScene(GameSceneName);
-    }
-
-    public void GoToScene(string sceneName)
-    {
-        SceneManager.LoadScene(sceneName);
-    }
-}
-```
-
-**실제 씬 연결(Start_scene, 에디터에서 수동 확인 완료)**
-
-| 버튼 | OnClick 대상 | CallState |
-|------|-------------|-----------|
-| Start | `SceneFlowManager.StartNewGame` | EditorAndRuntime — 정상 동작 확인됨 |
-| Quit | `SceneFlowManager.QuitGame` | 정상 동작 확인됨 (한때 Off로 꺼져있던 버그 발견 후 수정됨) |
-
-**Build Settings**: `scene_1`이 `ProjectSettings/EditorBuildSettings.asset`에 등록되어 있어야 `LoadScene("scene_1")`이 성공한다(과거엔 `Start_scene`만 등록되어 있었음 — 등록 완료).
-
----
-
-#### `WorldMapToggleController` (`WorldMapToggleController.cs`)
-
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/UI/WorldMapToggleController.cs` |
-| **역할** | M키/버튼으로 월드맵 패널 토글 |
-| **붙는 곳** | scene_1 — Chatting_UI (권장) |
-
-**Public API**
-
-| 멤버 | 설명 |
-|------|------|
-| `ToggleWorldMap()` | 표시/숨김 전환 |
-| `SetWorldMapVisible(bool)` | 명시적 설정 |
-| `OnToggleButtonClicked()` | UI Button용 |
-| `SetWorldMapSprite(Sprite)` | 런타임 지도 변경 |
-
-**코드 프리뷰**
-
-```csharp
-public void SetWorldMapVisible(bool value)
-{
-    isWorldMapVisible = value;
-    ApplyWorldMapVisibility();
-}
-
-private void ApplyWorldMapVisibility()
-{
-    if (isWorldMapVisible)
-        worldMapPanel.transform.SetAsLastSibling();
-    worldMapPanel.SetActive(isWorldMapVisible);
-}
-```
-
-**Inspector**: `worldMapPanel`, `worldMapSprite` (선택), `toggleKey` (기본 M)
-
----
-
-## 7. Editor (참고)
-
-#### `SsalBootstrapAudioMixer`
-
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Editor/SsalBootstrapAudioMixer.cs` |
-
-- 메뉴: `SSAL → Audio Mixer 설정 안내 (GameSettingsMixer)`
-- AudioMixer **자동 생성하지 않음**. Inspector 할당 또는 `Assets/Resources/GameSettingsMixer.mixer` 수동 생성 안내.
-
-#### `SettingSaveManagerJsonEditorTest`
-
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Editor/SettingSaveManagerJsonEditorTest.cs` |
-
-- 메뉴: `SSAL → Test settings.json 저장·로드 (Editor)`
-- `persistentDataPath/settings.json`에 테스트 데이터 쓰기/읽기 후 원본 복구.
-
-#### `MusicProfileEditor` / `MusicNodeDrawer`
-
-| 항목 | 내용 |
-|------|------|
-| **경로** | `Assets/Features/Scripts/Sound/Editor/` |
-
-- `MusicProfile` ScriptableObject의 커스텀 인스펙터와, `SerializeReference` 기반 `MusicNode` 트리를 트리 형태로 그려주는 PropertyDrawer.
-
----
-
-## 문서 동기화 규칙
-
-| 변경 종류 | 수정 문서 |
-|-----------|-----------|
-| 씬 GameObject / Inspector / Mermaid 흐름도 | [ScriptDiagrams.md](./ScriptDiagrams.md) Part 1 |
-| 클래스·모듈 관계 다이어그램 | [ScriptDiagrams.md](./ScriptDiagrams.md) Part 2 |
-| public API·코드 발췌·Inspector 표 | **본 문서** 해당 섹션 |
 
 **파일명 ↔ 클래스명**
 
@@ -810,29 +412,295 @@ private void ApplyWorldMapVisibility()
 
 ---
 
-## 스크립트 커버리지
+### 2.2. Settings 모듈
 
-| # | 파일 | 섹션 |
-|---|------|------|
-| 1 | SettingSaveManager.cs | 1 |
-| 2 | SettingData.cs | 1 |
-| 3 | MenuSettingScript.cs | 1 |
-| 4 | DialogueManager.cs | 2 |
-| 5 | DialoguePathResolver.cs | 2 |
-| 6 | DialogueLine.cs | 2 |
-| 7 | DialogueSceneControllerBase.cs | 2 |
-| 8 | Scene_1_Controller.cs | 2 |
-| 9 | SFXManager.cs | 3 |
-| 10 | MusicDirector.cs | 3 |
-| 11 | MusicProfile.cs | 3 |
-| 12 | MusicNode.cs | 3 |
-| 13 | Core/MonoSingleton.cs | 4 |
-| 14 | Save/GameSaveManager.cs | 4 |
-| 15 | Save/GameSaveData.cs | 4 |
-| 16 | Clue/ClueInventoryManager.cs | 5 |
-| 17 | Clue/ClueData.cs | 5 |
-| 18 | SceneController/SceneFlowManager.cs | 6 |
-| 19 | UI/WorldMapToggleController.cs | 6 |
-| — | Editor 4종(SsalBootstrapAudioMixer, SettingSaveManagerJsonEditorTest, MusicProfileEditor, MusicNodeDrawer) | 7 |
+**포함 스크립트**: `SettingSaveManager`, `SettingData`, `MenuSettingWindow`
 
-**삭제된 파일** (더 이상 존재하지 않음, 과거 문서에 있었음): `StartGame.cs`(`StartMenu`), `Settings/MenuButtons.cs`, `ExitGame.cs`, `Data/GlobalData.cs` — 전부 씬 어디에도 연결 안 된 죽은 코드였거나(`StartGame.cs`, `MenuButtons.cs`), `SceneFlowManager`로 기능이 흡수됨(`ExitGame.cs`), `GameSaveManager` 중심 구조로 대체됨(`GlobalData.cs`).
+> **Mermaid 레이아웃**: GitHub Mermaid에는 선·라벨 **겹침 방지 옵션이 없습니다.**  
+> `direction LR` + 같은 노드에서 나가는 화살표가 많으면 라벨이 겹치기 쉽습니다. **세로 배치(`flowchart TB`)·subgraph·노드 순서**로 피합니다.
+
+```mermaid
+flowchart TB
+    subgraph ui [Settings UI]
+        MSW[MenuSettingWindow]
+        AM[AudioMixer]
+    end
+
+    subgraph persistence [Save persistence]
+        SD[SettingData]
+        SM[SettingSaveManager]
+        FJSON[SettingsJsonFile]
+    end
+
+    MSW -->|EnsureExists| SM
+    MSW -->|SetFloat| AM
+    MSW -.->|via Instance settingData| SD
+
+    SM -->|JsonUtility| SD
+    SM -->|File IO| FJSON
+```
+
+`persistence` subgraph 안에서 **SettingData(위) → SettingSaveManager(중간) → SettingsJsonFile(아래)** 순으로 두어, SettingSaveManager에서 나가는 두 화살표·라벨이 서로 다른 방향으로 그려지게 했습니다.
+
+**관계 메모**
+
+| 항목 | 내용 |
+|------|------|
+| `EnsureExists()` 호출처 | `MenuSettingWindow.Awake/Start` |
+| AudioMixer 연결 | 1) Inspector `[SerializeField] mixer` 2) 없으면 `Resources.Load("GameSettingsMixer")` 시도. 실제 에셋: `Assets/Features/GameSettingsMixer.mixer` (Resources 아님 → **Inspector 할당 권장**) |
+| 노출 파라미터 | `MasterVolume`, `BGMVolume`, `SFXVolume` |
+| 싱글톤 방식 | `MonoSingleton<SettingSaveManager>` 상속 — `Instance`/`EnsureExists()`는 공통 베이스에서 제공 |
+
+---
+
+### 2.3. Dialogue 모듈
+
+**포함 스크립트**: `DialogueManager`, `DialoguePathResolver`, `DialogueLine.cs`, `DialogueSceneControllerBase`, `Scene_1_Controller`
+
+```mermaid
+classDiagram
+    direction TB
+
+    class DialogueSequence
+
+    DialogueSceneControllerBase <|-- Scene_1_Controller
+
+    DialogueSceneControllerBase --> DialogueFlowData : Load Flow JSON
+    DialogueSceneControllerBase --> DialogueManager : GetLine ShowLine
+    DialogueSceneControllerBase --> GameSaveManager : progress plus autosave
+    DialogueSceneControllerBase --> SceneFlowManager : GoToScene on finish
+    DialogueManager --> DialoguePathResolver : path candidates
+    DialogueManager --> DialogueData : Deserialize
+    DialogueData *-- DialogueLine
+    DialogueFlowData *-- DialogueSequence
+
+    DialogueSceneControllerBase : sequenceIndex
+    DialogueSceneControllerBase : currentLineId
+    DialogueSceneControllerBase : ChapterName abstract
+    DialogueSceneControllerBase : NextSceneName virtual
+    DialogueManager : dialogueCache
+```
+
+**Flow → Line 호출 체인**
+
+```mermaid
+flowchart TD
+    A[DialogueSceneControllerBase ShowNext] --> B[Resources Load Flow JSON]
+    B --> C[DialogueFlowData sequences i]
+    C --> D[DialogueManager GetLine]
+    D --> E[DialoguePathResolver folder and event candidates]
+    E --> F[Resources Load character dialogue JSON]
+    F --> G[DialogueData lines Find by id]
+    G --> H[DialogueManager ShowLine]
+    H --> I[TypeLine dialogue_KR]
+    H --> J[GameSaveManager SetDialogueProgress]
+```
+
+텍스트 요약: `Load(Flow)` → `sequences[i]` → `GetLine` → `DialoguePathResolver` → `Load(Dialogues/...)` → `Find(id)` → `ShowLine` → `TypeLine` + `SetDialogueProgress`
+
+**Flow 종료 시점**: 마지막 시퀀스까지 다 보여준 뒤 `EndScene()` → `OnDialogueFlowFinished()`에서 `SetChapter(ChapterName)` + `AutoSave()` + (`NextSceneName` 있으면) `SceneFlowManager.GoToScene()`.
+
+**캐릭터명 → Resources 폴더 매핑** (`DialoguePathResolver`)
+
+| JSON characterName | 폴더 |
+|--------------------|------|
+| 모피어스 | Morpheus |
+| 프레시아 | Presia |
+| 나레이션 | Narration |
+| 패트리지 | Partridge |
+| 혁명군 / 혁명군A / 혁명군B | Revolution |
+| 상인 / 상인A / 선생님 / 조력자 / 조력자A / 조력자B | etc |
+
+탐색 순서: 매핑 폴더 → characterName 그대로 → eventName 접두사 → `etc` fallback.
+
+**이벤트명 보정**: `Patridge_*` → `Partridge_*`
+
+---
+
+### 2.4. UI / World Map 모듈
+
+**포함 스크립트**: `WorldMapToggleController`
+
+```mermaid
+flowchart LR
+    Input[M key or Button] --> WMC[WorldMapToggleController]
+    WMC --> Toggle[ToggleWorldMap]
+    Toggle --> SetVisible[SetWorldMapVisible]
+    SetVisible --> Sibling[SetAsLastSibling]
+    SetVisible --> Active[SetActive panel]
+
+    WMC --> Image[worldMapPanel Image]
+    Image --> HasSprite{Has sprite?}
+    HasSprite -- Yes --> ShowSprite[Show sprite]
+    HasSprite -- No --> Fallback[Black fallback]
+```
+
+**관계 메모**
+
+- `worldMapPanel` 미연결 시 **자기 GameObject**를 패널로 사용.
+- `WorldMapPanel` 자체가 아닌, **항상 활성인 오브젝트**(예: `Chatting_UI`)에 스크립트를 붙이는 것이 안전 (본 문서 Part 1 참고).
+- `scene_1`에서 `Chatting_UI` → `WorldMapPanel` 참조 구조.
+
+---
+
+### 2.5. Sound 모듈
+
+**포함 스크립트**: `SFXManager`, `MusicDirector`, `MusicProfile`, `MusicNode`(및 6개 서브클래스), `MusicNodeDrawer`/`MusicProfileEditor`(editor)
+
+```mermaid
+flowchart TB
+    subgraph sfx [효과음 - 즉시 재생]
+        SFX[SFXManager Singleton]
+        AS1[AudioSource]
+        BTN[UI Button onClick]
+    end
+
+    subgraph music [배경음 - 노드 그래프 예약 재생]
+        MP[MusicProfile ScriptableObject]
+        ROOT[Root MusicNode]
+        DIR[MusicDirector]
+        AS2[AudioSource pool]
+    end
+
+    BTN --> SFX
+    SFX --> AS1
+
+    MP --> ROOT
+    DIR --> MP
+    ROOT -->|Clip Sequence Loop Random Overlay Delay| DIR
+    DIR --> AS2
+```
+
+**관계 메모**
+
+| 항목 | 내용 |
+|------|------|
+| `SFXManager` 생명주기 | `MonoSingleton<SFXManager>` — `DontDestroyOnLoad`, 씬 바뀔 때마다 새 Button에 클릭음 자동 바인딩 |
+| `MusicDirector` 생명주기 | 싱글톤 아님, `DontDestroyOnLoad` 없음 — **Start_scene 전용**, scene_1로 넘어가면 같이 파괴됨(재생 끊김 가능) |
+| `MusicNode` 종류 | `MusicClipNode`(단일 클립), `MusicSequenceNode`(순차), `MusicLoopNode`(반복), `MusicRandomNode`(무작위), `MusicOverlayNode`(동시 재생), `MusicDelayNode`(대기) — 전부 `SerializeReference` 기반 다형성 |
+| 재생 방식 | `AudioSettings.dspTime` + `PlayScheduled`로 미리 예약해서 끊김 없는 재생 구현 |
+| 볼륨/뮤트 | `MusicDirector`/`SFXManager`엔 볼륨 로직 없음 — `MenuSettingWindow`가 AudioMixer dB만 조절, AudioSource가 해당 Mixer 그룹에 물려있어야 실제로 반영됨(Inspector 설정 필요) |
+
+---
+
+### 2.6. Save / Progress 모듈
+
+**포함 스크립트**: `MonoSingleton<T>`, `GameSaveManager`, `GameSaveData`
+
+```mermaid
+flowchart TB
+    subgraph core [공통 베이스]
+        MS[MonoSingleton T]
+    end
+
+    subgraph save [Save persistence]
+        GSM[GameSaveManager]
+        GSD[GameSaveData]
+        DPS[DialogueProgressSaveData]
+        CIS[ClueInventorySaveData]
+        FILE[game_save_slot_N json]
+    end
+
+    MS <|-- GSM
+
+    GSM --> GSD
+    GSD --> DPS
+    GSD --> CIS
+    GSM -->|JsonUtility File IO| FILE
+
+    Caller1[DialogueSceneControllerBase] -->|SetDialogueProgress SetChapter AutoSave| GSM
+    Caller2[SceneFlowManager] -->|ResetForNewGame| GSM
+    Caller3[ClueInventoryManager] -->|AddClue HasClue| GSM
+```
+
+**관계 메모**
+
+| 항목 | 내용 |
+|------|------|
+| 슬롯 범위 | `MinSaveSlot`=1, `MaxSaveSlot`=3, `AutoSaveSlot`=1(=`MinSaveSlot`) |
+| `AutoSave()` | 항상 `AutoSaveSlot`에 저장. 수동 저장(`SaveGameToSlot`)과 진입점을 분리해서 의도를 코드로 드러냄 |
+| `ResetForNewGame(chapterName)` | 메모리상의 `GameSaveData`를 완전히 새로 만들고 지정 챕터로 세팅한 뒤 `AutoSave()` — "새 게임" 버튼에서만 사용 |
+| `SetDialogueProgress()` | 디스크에 안 씀, 메모리만 갱신 — 대사 한 줄 보여줄 때마다 호출됨 |
+| `PeekSlotData(slot)` | 현재 활성 슬롯 안 건드리고 다른 슬롯 파일만 읽음 — 저장 메뉴 미리보기용, 아직 UI 없음 |
+| **미구현** | 오토세이브 슬롯을 수동 저장으로부터 보호하는 로직(코드 레벨 가드) — 저장 메뉴 만들 때 추가 예정 |
+
+---
+
+### 2.7. Clue 모듈
+
+**포함 스크립트**: `ClueInventoryManager`, `ClueData`
+
+```mermaid
+flowchart LR
+    ClueData[ClueData clueId displayName description icon] -.->|아직 참조하는 곳 없음| ClueInventoryManager
+    ClueInventoryManager --> GameSaveManager
+    GameSaveManager --> ClueInventorySaveData[GameSaveData clueInventory]
+```
+
+**관계 메모**
+
+- `ClueInventoryManager`는 상태를 직접 안 들고, 전부 `GameSaveManager.Data.clueInventory`에 위임한다(단서 목록 저장 위치는 GameSaveManager 하나).
+- **아직 게임플레이/UI 어디서도 `AddClue`/`HasClue`를 부르지 않는다** — 데이터 구조와 매니저만 준비된 상태, 실제 단서 획득 이벤트는 미구현.
+
+---
+
+### 2.8. Scene Flow 모듈
+
+**포함 스크립트**: `SceneFlowManager`
+
+```mermaid
+flowchart TD
+    subgraph start_scene [Start_scene 버튼 OnClick]
+        StartBtn[Start to StartNewGame]
+        QuitBtn[Quit to QuitGame]
+    end
+
+    StartBtn --> SFM[SceneFlowManager]
+    QuitBtn --> SFM
+    DialogueEnd[DialogueSceneControllerBase Flow 종료] -->|NextSceneName 있을 때| SFM
+
+    SFM -->|StartNewGame| Reset[GameSaveManager ResetForNewGame]
+    Reset --> Load1[GoToScene scene_1]
+    SFM -->|ContinueGame 예정 버튼 없음| Load1
+    SFM -->|GoToScene| SceneManagerLoad[SceneManager LoadScene]
+```
+
+**현재 코드 상태**
+
+| 진입점 | 코드 | 상태 |
+|--------|------|------|
+| `SceneFlowManager.StartNewGame()` | `GameSaveManager.ResetForNewGame("Chapter01")` 후 `GoToScene("scene_1")` | 동작 확인됨(대사 끝까지 진행 + 세이브 파일 생성 검증 완료) |
+| `SceneFlowManager.ContinueGame()` | `GoToScene("scene_1")` 고정 | 코드만 있음, UI 버튼 없음, 챕터별 씬 매핑 없음 |
+| `SceneFlowManager.QuitGame()` | 에디터/빌드 종료 | 동작 확인됨 |
+| `SceneFlowManager.GoToScene(name)` | `SceneManager.LoadScene(name)` | 모든 씬 전환의 단일 진입점 |
+
+팀 작업 시 챕터가 여러 씬으로 늘어나면 `ContinueGame()`에 챕터 → 씬 이름 매핑을 추가해야 한다.
+
+---
+
+### 2.9. Singleton / Static 패턴 정리표
+
+| 타입 | 클래스 | 접근 방식 | 생명주기 |
+|------|--------|-----------|----------|
+| 공통 베이스 | `MonoSingleton<T>` | `Instance` + `EnsureExists()` | `DontDestroyOnLoad`, 하위 클래스가 `OnHostInstanceEstablished()`로 초기화 훅 사용 |
+| Singleton (MonoSingleton) | `GameSaveManager` | `EnsureExists()` | `DontDestroyOnLoad` |
+| Singleton (MonoSingleton) | `ClueInventoryManager` | `EnsureExists()` | `DontDestroyOnLoad` |
+| Singleton (MonoSingleton) | `SettingSaveManager` | `EnsureExists()` | `DontDestroyOnLoad` |
+| Singleton (MonoSingleton) | `SFXManager` | `EnsureExists()` | `DontDestroyOnLoad` |
+| Singleton (MonoSingleton) | `SceneFlowManager` | `EnsureExists()` | `DontDestroyOnLoad` |
+| Singleton (독자 구현) | `DialogueManager` | `Instance` (private set) | **씬 내 1개.** `DontDestroyOnLoad` 없음 |
+| 일반 MonoBehaviour | `MusicDirector` | 없음(직접 참조) | 씬 로컬, `DontDestroyOnLoad` 없음 |
+| Static | `DialoguePathResolver` | static 메서드만 | — |
+
+> `GlobalData`(static 필드로 씬 간 값 전달)는 삭제됨 — 챕터/진행 상태는 이제 `GameSaveManager`(DontDestroyOnLoad 싱글톤) 하나로 통일.
+
+---
+
+### 2.10. Editor 전용 (런타임 빌드 제외)
+
+| 파일 | 클래스 | 용도 |
+|------|--------|------|
+| `Assets/Features/Editor/SsalBootstrapAudioMixer.cs` | `SsalBootstrapAudioMixer` | 메뉴 `SSAL/Audio Mixer 설정 안내` — Mixer 생성 절차 안내 (자동 생성 X) |
+| `Assets/Features/Editor/SettingSaveManagerJsonEditorTest.cs` | `SettingSaveManagerJsonEditorTest` | 메뉴 `SSAL/Test settings.json 저장·로드` — JsonUtility I/O 검증 |
+| `Assets/Features/Scripts/Sound/Editor/MusicProfileEditor.cs` | `MusicProfileEditor` | `MusicProfile` ScriptableObject 커스텀 인스펙터 |
+| `Assets/Features/Scripts/Sound/Editor/MusicNodeDrawer.cs` | `MusicNodeDrawer` | `SerializeReference` 기반 `MusicNode` 트리 PropertyDrawer |
