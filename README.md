@@ -601,7 +601,7 @@ flowchart TB
         FILE[game_save_slot_N json]
     end
 
-    MS <|-- GSM
+    GSM -.->|extends| MS
 
     GSM --> GSD
     GSD --> DPS
